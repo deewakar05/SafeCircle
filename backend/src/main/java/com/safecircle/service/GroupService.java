@@ -57,6 +57,13 @@ public class GroupService {
         return toResponse(group);
     }
 
+    public List<GroupResponse> getUserGroups(String userId) {
+        return groupRepository.findByMemberIdsContaining(userId)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
     public GroupResponse setThreshold(String groupId, String requesterId, SetThresholdRequest request) {
         Group group = groupRepository.findById(groupId)
                 .orElseThrow(() -> new IllegalArgumentException("Group not found"));

@@ -42,6 +42,12 @@ public class GroupController {
         return ResponseEntity.ok(groupService.getGroup(id));
     }
 
+    @GetMapping("/my")
+    public ResponseEntity<java.util.List<GroupResponse>> getMyGroups(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(groupService.getUserGroups(getUserId(userDetails)));
+    }
+
     @PutMapping("/{id}/threshold")
     public ResponseEntity<GroupResponse> setThreshold(
             @PathVariable String id,

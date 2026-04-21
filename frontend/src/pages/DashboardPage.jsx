@@ -11,21 +11,17 @@ export default function DashboardPage() {
 
   // In MVP, we'll store joined group IDs in localStorage
   useEffect(() => {
-    const storedGroups = JSON.parse(localStorage.getItem('sc_groups') || '[]');
-    const fetchAll = async () => {
-      const fetched = [];
-      for (const id of storedGroups) {
-        try {
-          const res = await groupApi.get(id);
-          fetched.push(res.data);
-        } catch {
-          // stale id, skip
-        }
+    const fetchGroups = async () => {
+      try {
+        const res = await groupApi.listMyGroups();
+        setGroups(res.data);
+      } catch (err) {
+        console.error('Failed to fetch groups', err);
+      } finally {
+        setLoading(false);
       }
-      setGroups(fetched);
-      setLoading(false);
     };
-    fetchAll();
+    fetchGroups();
   }, []);
 
   const handleLogout = () => {

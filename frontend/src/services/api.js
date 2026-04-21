@@ -18,6 +18,7 @@ export const groupApi = {
   create:       (data)           => api.post('/groups/create', data),
   join:         (data)           => api.post('/groups/join', data),
   get:          (id)             => api.get(`/groups/${id}`),
+  listMyGroups: ()               => api.get('/groups/my'),
   setThreshold: (id, data)       => api.put(`/groups/${id}/threshold`, data),
   removeMember: (groupId, uid)   => api.delete(`/groups/${groupId}/members/${uid}`),
 };

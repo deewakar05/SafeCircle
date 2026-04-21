@@ -23,11 +23,6 @@ export default function GroupPage() {
     try {
       const res = await groupApi.create({ name: form.name, distanceThreshold: Number(form.threshold) });
       setResult(res.data);
-      // Save group id to localStorage
-      const existing = JSON.parse(localStorage.getItem('sc_groups') || '[]');
-      if (!existing.includes(res.data.id)) {
-        localStorage.setItem('sc_groups', JSON.stringify([...existing, res.data.id]));
-      }
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to create group');
     } finally {
@@ -41,10 +36,6 @@ export default function GroupPage() {
     try {
       const res = await groupApi.join({ inviteCode: form.code.toUpperCase() });
       setResult(res.data);
-      const existing = JSON.parse(localStorage.getItem('sc_groups') || '[]');
-      if (!existing.includes(res.data.id)) {
-        localStorage.setItem('sc_groups', JSON.stringify([...existing, res.data.id]));
-      }
     } catch (err) {
       setError(err.response?.data?.message || 'Invalid invite code');
     } finally {
