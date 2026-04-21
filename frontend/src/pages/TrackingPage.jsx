@@ -1,34 +1,29 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { LoadScript, GoogleMap, Marker, InfoWindow } from '@react-google-maps/api';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { groupApi, locationApi } from '../services/api';
 import { connectSocket, disconnectSocket } from '../services/socket';
 import { useAuth } from '../context/AuthContext';
 
-const GOOGLE_MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY || '';
-const MAP_CENTER = { lat: 28.6139, lng: 77.2090 }; // Default: New Delhi
+// Fix for default marker icons in Leaflet + Vite/Webpack
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
 
-const mapStyles = {
-  width: '100%', height: '100%',
-};
+const MAP_CENTER = [28.6139, 77.2090]; // [lat, lng]
 
-const darkMapOptions = {
-  styles: [
-    { elementType: 'geometry', stylers: [{ color: '#1a1d2e' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1d2e' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#6b7280' }] },
-    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2d3148' }] },
-    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#8b91a8' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1117' }] },
-    { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#1f2240' }] },
-    { featureType: 'transit.station', elementType: 'geometry', stylers: [{ color: '#1f2240' }] },
-  ],
-  disableDefaultUI: false,
-  zoomControl: true,
-  streetViewControl: false,
-  mapTypeControl: false,
-  fullscreenControl: false,
-};
+function RecenterMap({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center);
+  }, [center, map]);
+  return null;
+}
 
 export default function TrackingPage() {
   const { groupId } = useParams();
@@ -142,46 +137,34 @@ export default function TrackingPage() {
       <div style={styles.body}>
         {/* Map */}
         <div style={styles.mapWrapper}>
-          {GOOGLE_MAPS_KEY ? (
-            <LoadScript googleMapsApiKey={GOOGLE_MAPS_KEY}>
-              <GoogleMap
-                mapContainerStyle={mapStyles}
-                center={mapCenter}
-                zoom={14}
-                options={darkMapOptions}
+          <MapContainer
+            center={mapCenter}
+            zoom={13}
+            style={{ width: '100%', height: '100%', background: '#0F1117' }}
+            zoomControl={false}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              className="map-tiles"
+            />
+            
+            {memberList.map(loc => loc.lat !== 0 && (
+              <Marker
+                key={loc.userId}
+                position={[loc.lat, loc.lng]}
               >
-                {memberList.map(loc => loc.lat !== 0 && (
-                  <Marker
-                    key={loc.userId}
-                    position={{ lat: loc.lat, lng: loc.lng }}
-                    title={loc.userName}
-                    onClick={() => setSelected(loc)}
-                  />
-                ))}
-                {selected && (
-                  <InfoWindow
-                    position={{ lat: selected.lat, lng: selected.lng }}
-                    onCloseClick={() => setSelected(null)}
-                  >
-                    <div style={{ color: '#111', padding: 4 }}>
-                      <strong>{selected.userName}</strong>
-                      <br />
-                      <span style={{ fontSize: '0.8rem' }}>{selected.status}</span>
-                    </div>
-                  </InfoWindow>
-                )}
-              </GoogleMap>
-            </LoadScript>
-          ) : (
-            <div style={styles.noMap}>
-              <div style={{ fontSize: 64 }}>🗺️</div>
-              <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: 8 }}>Map Preview</h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: 260, textAlign: 'center' }}>
-                Add your <code style={{color:'var(--primary)'}}>VITE_GOOGLE_MAPS_KEY</code> to <code>.env</code> to enable the live map.
-              </p>
-              <div style={styles.mockMapGrid} />
-            </div>
-          )}
+                <Popup>
+                  <div style={{ color: '#111', padding: '4px 8px' }}>
+                    <strong style={{ display: 'block', fontSize: '0.9rem' }}>{loc.userName}</strong>
+                    <span style={{ fontSize: '0.8rem', color: '#666' }}>{loc.status}</span>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+            
+            <RecenterMap center={mapCenter} />
+          </MapContainer>
         </div>
 
         {/* Members Panel */}

@@ -9,13 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-google-maps/api": "^2.19.3",
+    "@stomp/stompjs": "^7.0.0",
+    "axios": "^1.7.7",
+    "leaflet": "^1.9.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1",
     "react-router-dom": "^6.26.1",
-    "axios": "^1.7.7",
-    "@stomp/stompjs": "^7.0.0",
-    "sockjs-client": "^1.6.1",
-    "@react-google-maps/api": "^2.19.3"
+    "sockjs-client": "^1.6.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
