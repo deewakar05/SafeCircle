@@ -45,14 +45,20 @@ export default function TrackingPage() {
   const watchIdRef = useRef(null);
   const alertTimers = useRef([]);
 
-  // Load group info
+  // Load and Pool group info
   useEffect(() => {
-    groupApi.get(groupId).then(r => setGroup(r.data)).catch(() => {});
-    locationApi.getGroup(groupId).then(r => {
-      const map = {};
-      r.data.forEach(loc => { map[loc.userId] = loc; });
-      setMembers(map);
-    }).catch(() => {});
+    const fetchAll = () => {
+      groupApi.get(groupId).then(r => setGroup(r.data)).catch(() => {});
+      locationApi.getGroup(groupId).then(r => {
+        const map = {};
+        r.data.forEach(loc => { map[loc.userId] = loc; });
+        setMembers(map);
+      }).catch(() => {});
+    };
+
+    fetchAll();
+    const interval = setInterval(fetchAll, 10000); // 10s Polling fallback
+    return () => clearInterval(interval);
   }, [groupId]);
 
   // WebSocket connection
@@ -212,7 +218,9 @@ export default function TrackingPage() {
 
 function MemberItem({ loc, isSelf, onClick }) {
   const statusClass = {
-    ONLINE: 'badge-online', OFFLINE: 'badge-offline', NO_GPS: 'badge-no-gps',
+    ONLINE: 'badge-online', 
+    OFFLINE: 'badge-offline', 
+    NO_GPS: 'badge-no-gps',
   }[loc.status] || 'badge-offline';
 
   return (
@@ -222,13 +230,22 @@ function MemberItem({ loc, isSelf, onClick }) {
         <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>
           {loc.userName}{isSelf && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> (you)</span>}
         </div>
-        <span className={`badge ${statusClass}`} style={{ marginTop: 3 }}>
-          <span className="badge-dot" />
-          {loc.status}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+          <span className={`badge ${statusClass}`}>
+            <span className="badge-dot" />
+            {loc.status}
+          </span>
+          {loc.lat !== 0 && (
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+               · {loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}
+            </span>
+          )}
+        </div>
       </div>
-      {loc.status !== 'OFFLINE' && loc.lat !== 0 && (
-        <button style={styles.locBtn} title="Centre on map">📍</button>
+      {loc.status === 'ONLINE' && loc.lat !== 0 && (
+        <button style={styles.locBtn} title="Centre on map" onClick={(e) => { e.stopPropagation(); onClick(); }}>
+          📍
+        </button>
       )}
     </div>
   );
