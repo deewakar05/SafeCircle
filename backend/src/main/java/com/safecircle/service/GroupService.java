@@ -4,14 +4,14 @@ import com.safecircle.dto.GroupDto.*;
 import com.safecircle.model.Group;
 import com.safecircle.repository.GroupRepository;
 import com.safecircle.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.List;
 
 @Service
-@RequiredArgsConstructor
 public class GroupService {
 
     private final GroupRepository groupRepository;
@@ -20,12 +20,20 @@ public class GroupService {
     private static final String CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final SecureRandom RANDOM = new SecureRandom();
 
+    @Autowired
+    public GroupService(GroupRepository groupRepository, UserRepository userRepository) {
+        this.groupRepository = groupRepository;
+        this.userRepository = userRepository;
+    }
+
     public GroupResponse createGroup(String adminId, CreateGroupRequest request) {
         String inviteCode = generateUniqueCode();
+        List<String> members = new ArrayList<>();
+        members.add(adminId);
         Group group = Group.builder()
                 .name(request.name())
                 .adminId(adminId)
-                .memberIds(new ArrayList<>(java.util.List.of(adminId)))
+                .memberIds(members)
                 .inviteCode(inviteCode)
                 .distanceThreshold(request.distanceThreshold() > 0 ? request.distanceThreshold() : 300)
                 .build();
@@ -36,7 +44,6 @@ public class GroupService {
     public GroupResponse joinGroup(String userId, JoinGroupRequest request) {
         Group group = groupRepository.findByInviteCode(request.inviteCode())
                 .orElseThrow(() -> new IllegalArgumentException("Invalid invite code"));
-
         if (!group.getMemberIds().contains(userId)) {
             group.getMemberIds().add(userId);
             groupRepository.save(group);

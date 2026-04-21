@@ -4,7 +4,7 @@ import com.safecircle.dto.GroupDto.*;
 import com.safecircle.repository.UserRepository;
 import com.safecircle.service.GroupService;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -12,26 +12,29 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/groups")
-@RequiredArgsConstructor
 public class GroupController {
 
     private final GroupService groupService;
     private final UserRepository userRepository;
 
+    @Autowired
+    public GroupController(GroupService groupService, UserRepository userRepository) {
+        this.groupService = groupService;
+        this.userRepository = userRepository;
+    }
+
     @PostMapping("/create")
     public ResponseEntity<GroupResponse> createGroup(
             @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody CreateGroupRequest request) {
-        String userId = getUserId(userDetails);
-        return ResponseEntity.ok(groupService.createGroup(userId, request));
+        return ResponseEntity.ok(groupService.createGroup(getUserId(userDetails), request));
     }
 
     @PostMapping("/join")
     public ResponseEntity<GroupResponse> joinGroup(
             @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody JoinGroupRequest request) {
-        String userId = getUserId(userDetails);
-        return ResponseEntity.ok(groupService.joinGroup(userId, request));
+        return ResponseEntity.ok(groupService.joinGroup(getUserId(userDetails), request));
     }
 
     @GetMapping("/{id}")
@@ -44,8 +47,7 @@ public class GroupController {
             @PathVariable String id,
             @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody SetThresholdRequest request) {
-        String userId = getUserId(userDetails);
-        return ResponseEntity.ok(groupService.setThreshold(id, userId, request));
+        return ResponseEntity.ok(groupService.setThreshold(id, getUserId(userDetails), request));
     }
 
     @DeleteMapping("/{id}/members/{userId}")
@@ -53,8 +55,7 @@ public class GroupController {
             @PathVariable String id,
             @PathVariable String userId,
             @AuthenticationPrincipal UserDetails userDetails) {
-        String adminId = getUserId(userDetails);
-        groupService.removeMember(id, adminId, userId);
+        groupService.removeMember(id, getUserId(userDetails), userId);
         return ResponseEntity.noContent().build();
     }
 
