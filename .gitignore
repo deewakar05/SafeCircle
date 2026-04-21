@@ -1,0 +1,28 @@
+# ========== Backend (Maven / Java) ==========
+backend/target/
+backend/.mvn/wrapper/maven-wrapper.jar
+backend/*.iml
+backend/.classpath
+backend/.project
+backend/.settings/
+
+# ========== Frontend (Node / Vite) ==========
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# ========== IDE / OS ==========
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+*.class
+*.log
+*.swp
+*.swo
+
+# ========== Secrets ==========
+*.pem
+*.key
+application-prod.properties
