@@ -6,8 +6,8 @@ import java.util.List;
 public class RouteDto {
 
     public record CheckpointDto(
-            @NotNull double lat,
-            @NotNull double lng,
+            @NotNull Double lat,
+            @NotNull Double lng,
             String name
     ) {}
 

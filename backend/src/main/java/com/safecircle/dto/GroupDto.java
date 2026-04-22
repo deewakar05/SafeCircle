@@ -8,7 +8,7 @@ public class GroupDto {
 
     public record CreateGroupRequest(
             @NotBlank String name,
-            @Positive double distanceThreshold
+            double distanceThreshold
     ) {}
 
     public record JoinGroupRequest(
@@ -16,7 +16,7 @@ public class GroupDto {
     ) {}
 
     public record SetThresholdRequest(
-            @NotNull @Positive double threshold
+            @NotNull @Positive Double threshold
     ) {}
 
     public record GroupResponse(
