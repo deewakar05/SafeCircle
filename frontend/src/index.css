@@ -323,7 +323,7 @@ body {
    Adding a transition here makes ALL markers
    animate smoothly to new GPS positions.     */
 .leaflet-marker-icon {
-  transition: transform 0.85s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+  transition: transform 1.2s linear, opacity 0.3s ease !important;
 }
 
 /* ── Map marker pulse ring ──────────────── */

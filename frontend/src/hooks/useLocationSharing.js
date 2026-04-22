@@ -50,43 +50,66 @@ export function useLocationSharing(groupId, wsPublish) {
     }
     setGpsError(null);
     setSharing(true);
+  }, []);
 
-    const onSuccess = (pos) => {
-      const { latitude: lat, longitude: lng, accuracy: acc } = pos.coords;
-      setAccuracy(Math.round(acc));
+  // Effect to manage the actual watchPosition and battery saving modes
+  useEffect(() => {
+    if (!sharing) return;
 
-      // Throttle: only publish if moved >5 m OR >5 s since last send
-      const now  = Date.now();
-      const last = lastSentRef.current;
-      const moved =
-        !last ||
-        Math.abs(lat - last.lat) > 0.00005 ||
-        Math.abs(lng - last.lng) > 0.00005 ||
-        now - last.ts > 5000;
+    const setupWatcher = () => {
+      if (watchIdRef.current != null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
 
-      if (moved) {
-        lastSentRef.current = { lat, lng, ts: now };
-        sendPayload({ groupId, lat, lng, status: 'ONLINE', accuracy: acc });
+      const isHidden = document.hidden;
+
+      const onSuccess = (pos) => {
+        const { latitude: lat, longitude: lng, accuracy: acc } = pos.coords;
+        setAccuracy(Math.round(acc));
+
+        const now  = Date.now();
+        const last = lastSentRef.current;
+        const timeThreshold = isHidden ? 15000 : 5000; // Slower updates if backgrounded
+        
+        const moved =
+          !last ||
+          Math.abs(lat - last.lat) > 0.00005 ||
+          Math.abs(lng - last.lng) > 0.00005 ||
+          now - last.ts > timeThreshold;
+
+        if (moved) {
+          lastSentRef.current = { lat, lng, ts: now };
+          sendPayload({ groupId, lat, lng, status: 'ONLINE', accuracy: acc });
+        }
+      };
+
+      const onError = (err) => {
+        console.warn('[GPS]', err.message);
+        setGpsError(err.message);
+        sendPayload({ groupId, lat: 0, lng: 0, status: 'NO_GPS', accuracy: null });
+      };
+
+      watchIdRef.current = navigator.geolocation.watchPosition(onSuccess, onError, {
+        enableHighAccuracy: !isHidden, // Disable high accuracy (GPS) when app is in background to save battery
+        maximumAge: isHidden ? 30000 : 10000,
+        timeout: 15000,
+      });
+    };
+
+    setupWatcher();
+
+    const handleVis = () => setupWatcher();
+    document.addEventListener('visibilitychange', handleVis);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVis);
+      if (watchIdRef.current != null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
       }
     };
+  }, [sharing, groupId, sendPayload]);
 
-    const onError = (err) => {
-      console.warn('[GPS]', err.message);
-      setGpsError(err.message);
-      sendPayload({ groupId, lat: 0, lng: 0, status: 'NO_GPS', accuracy: null });
-    };
-
-    watchIdRef.current = navigator.geolocation.watchPosition(onSuccess, onError, {
-      enableHighAccuracy: true,
-      maximumAge: 5000,
-      timeout: 10000,
-    });
-  }, [groupId, sendPayload]);
-
-  // Cleanup on unmount
-  useEffect(() => () => {
-    if (watchIdRef.current != null) stopSharing();
-  }, [stopSharing]);
-
+  // Cleanup on unmount handled by the effect above
   return { sharing, accuracy, gpsError, startSharing, stopSharing };
 }

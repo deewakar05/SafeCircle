@@ -4,7 +4,6 @@ import com.safecircle.dto.GroupDto.*;
 import com.safecircle.dto.RouteDto.*;
 import com.safecircle.model.Group;
 import com.safecircle.repository.GroupRepository;
-import com.safecircle.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -16,15 +15,13 @@ import java.util.List;
 public class GroupService {
 
     private final GroupRepository groupRepository;
-    private final UserRepository userRepository;
 
     private static final String CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     @Autowired
-    public GroupService(GroupRepository groupRepository, UserRepository userRepository) {
+    public GroupService(GroupRepository groupRepository) {
         this.groupRepository = groupRepository;
-        this.userRepository = userRepository;
     }
 
     public GroupResponse createGroup(String adminId, CreateGroupRequest request) {

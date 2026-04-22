@@ -31,9 +31,9 @@ function approxDist(lat1, lng1, lat2, lng2) {
 }
 
 /* ─── Relative time ─── */
-function relTime(ts) {
+function relTime(ts, now = Date.now()) {
   if (!ts) return '';
-  const s = Math.floor((Date.now() - ts) / 1000);
+  const s = Math.floor((now - ts) / 1000);
   if (s < 10) return 'just now';
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
@@ -100,8 +100,14 @@ function makeCheckpointIcon(index) {
 }
 
 /* ─── Map controller: fit bounds + flyTo ─── */
-function MapController({ members, focusTarget }) {
+function MapController({ members, focusTarget, setFocusTarget }) {
   const map = useMap();
+
+  useMapEvents({
+    dragstart() {
+      if (focusTarget) setFocusTarget(null);
+    }
+  });
 
   // Fit all online markers on first meaningful load
   const fittedRef = useRef(false);
@@ -177,7 +183,7 @@ export default function TrackingPage() {
   const [colorMap,    setColorMap]    = useState({});
   const [panelOpen,   setPanelOpen]   = useState(true);
   const [lastPoll,    setLastPoll]    = useState(null);
-  const [, setTick]                   = useState(0);   // heartbeat for live clock
+  const [now,         setNow]         = useState(Date.now());
 
   // Route state
   const [isEditingRoute, setIsEditingRoute] = useState(false);
@@ -260,7 +266,7 @@ export default function TrackingPage() {
       }).catch(() => {});
     };
     fetchAll();
-    const id = setInterval(fetchAll, 10_000);
+    const id = setInterval(fetchAll, 60_000); // 60s fallback polling instead of 10s to save battery/bandwidth
     return () => clearInterval(id);
   }, [groupId, assignColor, isEditingRoute]);
 
@@ -279,7 +285,7 @@ export default function TrackingPage() {
 
   /* ── 1-second heartbeat for live timestamps ── */
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 1000);
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -319,7 +325,6 @@ export default function TrackingPage() {
         </div>
       )}
 
-      {/* ══ HEADER ══════════════════════════════════════════════════════ */}
       <header style={S.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
           <button id="back-btn" className="btn btn-ghost"
@@ -415,7 +420,6 @@ export default function TrackingPage() {
         </div>
       )}
 
-      {/* ══ BODY ═══════════════════════════════════════════════════════ */}
       <div style={S.body}>
 
         {/* ── Map ── */}
@@ -429,7 +433,7 @@ export default function TrackingPage() {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               className="map-tiles" />
 
-            <MapController members={members} focusTarget={focusTarget} />
+            <MapController members={members} focusTarget={focusTarget} setFocusTarget={setFocusTarget} />
             <RouteEditor isEditing={isEditingRoute} onAddPoint={p => setRoutePoints(prev => [...prev, p])} />
 
             {/* Render Route Polyline */}
@@ -485,7 +489,7 @@ export default function TrackingPage() {
                             {loc.userName}{isSelf ? ' (you)' : ''}
                           </strong>
                           <span style={{ fontSize: '0.75rem', color: '#555' }}>
-                            {loc.status} · {relTime(loc.timestamp)}
+                            {loc.status} · {relTime(loc.timestamp, now)}
                           </span>
                           {speeds[loc.userId] > 0 && (
                             <span style={{ display: 'block', fontSize: '0.72rem', color: '#777', marginTop: 2 }}>
@@ -505,7 +509,6 @@ export default function TrackingPage() {
           </MapContainer>
         </div>
 
-        {/* ══ SIDE PANEL ═══════════════════════════════════════════════ */}
         {panelOpen && (
           <aside style={S.panel}>
             <div style={S.panelHead}>
@@ -585,7 +588,7 @@ function MemberRow({ loc, isSelf, color, speed, onClick }) {
           </span>
           {loc.timestamp > 0 && (
             <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-              {relTime(loc.timestamp)}
+              {relTime(loc.timestamp, now)}
             </span>
           )}
         </div>
