@@ -103,4 +103,5 @@ npm run dev
 - [x] **Phase 2:** Implement Group Management APIs & Models
 - [x] **Phase 3:** GPS Tracking, MongoDB Geospatial Data, & Front-End Leaflet Maps
 - [x] **Phase 4:** The Real-Time Engine (WebSockets, Instant OFFLINE detection, Army-style UI)
-- [ ] **Phase 5 (Next):** Geofencing alerts, Battery optimizations, and Historical Route Playback.
+- [x] **Phase 5:** Smart Alerts & Monitoring (User offline detection, Distance alerts, Status indicators)
+- [x] **Phase 6:** Route Planning & Navigation
