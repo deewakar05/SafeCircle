@@ -1,6 +1,7 @@
 package com.safecircle.service;
 
 import com.safecircle.dto.GroupDto.*;
+import com.safecircle.dto.RouteDto.*;
 import com.safecircle.model.Group;
 import com.safecircle.repository.GroupRepository;
 import com.safecircle.repository.UserRepository;
@@ -82,6 +83,19 @@ public class GroupService {
         }
         group.getMemberIds().remove(targetUserId);
         groupRepository.save(group);
+    }
+
+    public GroupResponse updateRoute(String groupId, String adminId, UpdateRouteRequest request) {
+        Group group = groupRepository.findById(groupId)
+                .orElseThrow(() -> new IllegalArgumentException("Group not found"));
+        if (!group.getAdminId().equals(adminId)) {
+            throw new SecurityException("Only admin can update route");
+        }
+        List<Group.Checkpoint> checkpoints = request.checkpoints().stream()
+                .map(dto -> new Group.Checkpoint(dto.lat(), dto.lng(), dto.name()))
+                .toList();
+        group.setRoute(checkpoints);
+        return toResponse(groupRepository.save(group));
     }
 
     private String generateUniqueCode() {

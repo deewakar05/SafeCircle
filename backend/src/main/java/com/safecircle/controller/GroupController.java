@@ -1,6 +1,7 @@
 package com.safecircle.controller;
 
 import com.safecircle.dto.GroupDto.*;
+import com.safecircle.dto.RouteDto.*;
 import com.safecircle.repository.UserRepository;
 import com.safecircle.service.GroupService;
 import jakarta.validation.Valid;
@@ -63,6 +64,14 @@ public class GroupController {
             @AuthenticationPrincipal UserDetails userDetails) {
         groupService.removeMember(id, getUserId(userDetails), userId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{id}/route")
+    public ResponseEntity<GroupResponse> updateRoute(
+            @PathVariable String id,
+            @AuthenticationPrincipal UserDetails userDetails,
+            @Valid @RequestBody UpdateRouteRequest request) {
+        return ResponseEntity.ok(groupService.updateRoute(id, getUserId(userDetails), request));
     }
 
     private String getUserId(UserDetails userDetails) {

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, CircleMarker, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { groupApi, locationApi } from '../services/api';
@@ -86,6 +86,19 @@ function makeMarkerIcon(color, initials, isSelf, isPulsing) {
   });
 }
 
+/* ─── Checkpoint Icon ─── */
+function makeCheckpointIcon(index) {
+  const html = `
+    <div style="width:28px;height:28px;border-radius:50%;
+                background:var(--primary);border:2px solid #fff;
+                display:flex;align-items:center;justify-content:center;
+                font-weight:bold;color:#fff;font-size:12px;
+                box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+      ${index + 1}
+    </div>`;
+  return L.divIcon({ html, className: '', iconSize: [28, 28], iconAnchor: [14, 14] });
+}
+
 /* ─── Map controller: fit bounds + flyTo ─── */
 function MapController({ members, focusTarget }) {
   const map = useMap();
@@ -108,6 +121,35 @@ function MapController({ members, focusTarget }) {
     }
   }, [focusTarget, map]);
 
+  return null;
+}
+
+/* ─── OSRM Route Fetcher ─── */
+async function fetchOSRMRoute(checkpoints) {
+  if (checkpoints.length < 2) return [];
+  const coords = checkpoints.map(c => `${c.lng},${c.lat}`).join(';');
+  try {
+    const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`);
+    const data = await res.json();
+    if (data.routes && data.routes.length > 0) {
+      return data.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]); // Leaflet uses [lat, lng]
+    }
+  } catch (err) {
+    console.error('OSRM fetch error:', err);
+  }
+  // Fallback to straight lines if OSRM fails
+  return checkpoints.map(c => [c.lat, c.lng]);
+}
+
+/* ─── Map Events for Route Editing ─── */
+function RouteEditor({ isEditing, onAddPoint }) {
+  useMapEvents({
+    click(e) {
+      if (isEditing) {
+        onAddPoint({ lat: e.latlng.lat, lng: e.latlng.lng, name: `Point` });
+      }
+    }
+  });
   return null;
 }
 
@@ -136,6 +178,12 @@ export default function TrackingPage() {
   const [panelOpen,   setPanelOpen]   = useState(true);
   const [lastPoll,    setLastPoll]    = useState(null);
   const [, setTick]                   = useState(0);   // heartbeat for live clock
+
+  // Route state
+  const [isEditingRoute, setIsEditingRoute] = useState(false);
+  const [routePoints, setRoutePoints]       = useState([]);
+  const [osrmPath, setOsrmPath]             = useState([]);
+  const [routeSaving, setRouteSaving]       = useState(false);
 
   const alertTimers   = useRef([]);
   const prevMembers   = useRef({});  // tracks previous positions for speed calc
@@ -192,7 +240,12 @@ export default function TrackingPage() {
   /* ── Polling (initial load + fallback) ── */
   useEffect(() => {
     const fetchAll = () => {
-      groupApi.get(groupId).then(r => setGroup(r.data)).catch(() => {});
+      groupApi.get(groupId).then(r => {
+        setGroup(r.data);
+        if (r.data.route && r.data.route.length > 0 && !isEditingRoute) {
+          setRoutePoints(r.data.route);
+        }
+      }).catch(() => {});
       locationApi.getGroup(groupId).then(r => {
         r.data.forEach(loc => {
           assignColor(loc.userId);
@@ -209,7 +262,20 @@ export default function TrackingPage() {
     fetchAll();
     const id = setInterval(fetchAll, 10_000);
     return () => clearInterval(id);
-  }, [groupId, assignColor]);
+  }, [groupId, assignColor, isEditingRoute]);
+
+  /* ── Fetch OSRM geometry when routePoints change ── */
+  useEffect(() => {
+    let active = true;
+    if (routePoints.length > 1) {
+      fetchOSRMRoute(routePoints).then(path => {
+        if (active) setOsrmPath(path);
+      });
+    } else {
+      setOsrmPath([]);
+    }
+    return () => { active = false; };
+  }, [routePoints]);
 
   /* ── 1-second heartbeat for live timestamps ── */
   useEffect(() => {
@@ -227,6 +293,21 @@ export default function TrackingPage() {
 
   const locateMe = () => {
     if (user?.userId && members[user.userId]) setFocusTarget(members[user.userId]);
+  };
+
+  const isAdmin = user?.userId && group?.adminId === user.userId;
+
+  const handleSaveRoute = async () => {
+    setRouteSaving(true);
+    try {
+      await groupApi.updateRoute(groupId, { checkpoints: routePoints });
+      handleAlert('✅ Route saved successfully');
+      setIsEditingRoute(false);
+    } catch (err) {
+      handleAlert('❌ Failed to save route');
+    } finally {
+      setRouteSaving(false);
+    }
   };
 
   return (
@@ -284,6 +365,12 @@ export default function TrackingPage() {
             style={{ padding: '10px 20px' }}>
             {sharing ? '⏹ Stop' : '📡 Share'}
           </button>
+          {isAdmin && !isEditingRoute && (
+            <button className="btn btn-secondary" style={{ padding: '8px 12px' }}
+              onClick={() => setIsEditingRoute(true)}>
+              🗺️ Edit Route
+            </button>
+          )}
           <button id="toggle-panel-btn" className="btn btn-ghost"
             style={{ padding: '8px 12px' }}
             onClick={() => setPanelOpen(v => !v)} title="Toggle panel">
@@ -291,6 +378,27 @@ export default function TrackingPage() {
           </button>
         </div>
       </header>
+
+      {/* ── Route Edit Toolbar ── */}
+      {isEditingRoute && (
+        <div style={S.routeToolbar}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>🗺️ Route Edit Mode: Click on the map to add checkpoints</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+              onClick={() => { setRoutePoints([]); setOsrmPath([]); }}>
+              🗑️ Clear
+            </button>
+            <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+              onClick={() => { setIsEditingRoute(false); setRoutePoints(group?.route || []); }}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" style={{ padding: '4px 14px', fontSize: '0.8rem' }}
+              onClick={handleSaveRoute} disabled={routeSaving}>
+              {routeSaving ? 'Saving...' : '💾 Save Route'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── GPS status bar ── */}
       {(sharing || gpsError) && (
@@ -322,6 +430,21 @@ export default function TrackingPage() {
               className="map-tiles" />
 
             <MapController members={members} focusTarget={focusTarget} />
+            <RouteEditor isEditing={isEditingRoute} onAddPoint={p => setRoutePoints(prev => [...prev, p])} />
+
+            {/* Render Route Polyline */}
+            {osrmPath.length > 0 && (
+              <Polyline positions={osrmPath} pathOptions={{ color: 'var(--primary)', weight: 5, opacity: 0.8 }} />
+            )}
+            
+            {/* Render Route Checkpoints */}
+            {routePoints.map((pt, idx) => (
+              <Marker key={`cp-${idx}`} position={[pt.lat, pt.lng]} icon={makeCheckpointIcon(idx)}>
+                <Popup>
+                  <div style={{ padding: '2px 4px', fontWeight: 600 }}>Checkpoint {idx + 1}</div>
+                </Popup>
+              </Marker>
+            ))}
 
             {memberList.map(loc => {
               if (loc.lat === 0 && loc.lng === 0) return null;
@@ -546,4 +669,8 @@ const S = {
   },
   popup:      { display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 2px', minWidth: 140 },
   popupDot:   { width: 10, height: 10, borderRadius: '50%', marginTop: 4, flexShrink: 0 },
+  routeToolbar: {
+    background: 'var(--primary-light)', padding: '8px 18px', display: 'flex',
+    alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', flexShrink: 0
+  }
 };
