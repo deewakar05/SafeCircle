@@ -27,7 +27,12 @@ export function createClient({ onConnect, onDisconnect, onError }) {
   const token = localStorage.getItem('sc_token') || '';
 
   _client = new Client({
-    webSocketFactory: () => new SockJS('/ws'),
+    webSocketFactory: () => {
+      const WS_URL = import.meta.env.VITE_WS_BASE_URL || '/ws';
+      // SockJS requires absolute URLs if it's hitting a different domain
+      const finalUrl = WS_URL.startsWith('http') ? WS_URL : (window.location.origin + WS_URL);
+      return new SockJS(finalUrl);
+    },
     // Send JWT in STOMP CONNECT frame — picked up by WebSocketChannelInterceptor
     connectHeaders: {
       Authorization: `Bearer ${token}`,
