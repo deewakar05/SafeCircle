@@ -21,6 +21,7 @@ export const groupApi = {
   listMyGroups: ()               => api.get('/groups/my'),
   setThreshold: (id, data)       => api.put(`/groups/${id}/threshold`, data),
   removeMember: (groupId, uid)   => api.delete(`/groups/${groupId}/members/${uid}`),
+  updateRoute:  (id, data)       => api.put(`/groups/${id}/route`, data),
 };
 
 export const locationApi = {
