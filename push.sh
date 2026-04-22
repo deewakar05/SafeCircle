@@ -3,11 +3,11 @@
 echo "Switching to main branch..."
 git checkout main
 
-echo "Adding all Phase 7 and cleanup changes..."
+echo "Adding Phase 8 SOS changes..."
 git add .
 
 echo "Committing..."
-git commit -m "chore: Phase 7 UI polish and architectural cleanup"
+git commit -m "feat: complete Phase 8 SOS Emergency Feature"
 
 echo "Syncing backend branch..."
 git checkout backend
@@ -22,4 +22,4 @@ git push origin main
 git push origin backend --force
 git push origin frontend --force
 
-echo "Done! Phase 7 is fully published."
+echo "Done! Phase 8 is fully published to all branches."

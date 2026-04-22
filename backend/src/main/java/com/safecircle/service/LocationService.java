@@ -56,6 +56,12 @@ public class LocationService {
         locationRepository.save(location);
         LocationResponse response = toResponse(location);
         messagingTemplate.convertAndSend("/topic/group/" + request.groupId(), response);
+
+        if ("SOS".equals(request.status())) {
+            messagingTemplate.convertAndSend("/topic/alerts/" + request.groupId(), "🚨 " + userName + " TRIGGERED SOS!");
+            log.warn("SOS triggered by user {} in group {}", userId, request.groupId());
+        }
+
         checkDistanceAlerts(request.groupId(), location);
         return response;
     }

@@ -361,3 +361,28 @@ body {
 
 /* ── Prevent map clicks from firing on markers ── */
 .leaflet-marker-icon { cursor: pointer; }
+
+/* ── Phase 8: SOS Emergency Styles ── */
+.sos-banner {
+  background: var(--danger);
+  color: #fff;
+  padding: 10px 16px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  text-align: center;
+  font-size: 0.9rem;
+  animation: sos-banner-flash 1s infinite alternate;
+  border-bottom: 2px solid #851818;
+}
+
+@keyframes sos-banner-flash {
+  from { background: #DC2626; }
+  to   { background: #991B1B; }
+}
+
+@keyframes sos-marker-pulse {
+  0%   { transform: translate(-50%, -50%) scale(1);   opacity: 0.9; }
+  50%  { transform: translate(-50%, -50%) scale(2.5); opacity: 0.4; background: #EF4444; }
+  100% { transform: translate(-50%, -50%) scale(3);   opacity: 0; }
+}

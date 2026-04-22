@@ -41,22 +41,38 @@ function relTime(ts, now = Date.now()) {
 }
 
 /* ─── Army-style custom marker ─── */
-function makeMarkerIcon(color, initials, isSelf, isPulsing) {
+function makeMarkerIcon(color, initials, isSelf, isPulsing, isSOS) {
   const body   = isSelf ? 44 : 38;
   const total  = body + 32; // room for pulse ring
   const half   = total / 2;
-  const glow   = isSelf
-    ? `box-shadow:0 0 0 3px rgba(255,255,255,0.25),0 4px 20px ${color}99;`
-    : `box-shadow:0 2px 10px ${color}66;`;
+  const glow   = isSOS 
+    ? `box-shadow:0 0 0 4px #fff,0 4px 25px #EF4444;`
+    : isSelf
+      ? `box-shadow:0 0 0 3px rgba(255,255,255,0.25),0 4px 20px ${color}99;`
+      : `box-shadow:0 2px 10px ${color}66;`;
 
-  const ring = isPulsing ? `
+  const renderColor = isSOS ? '#EF4444' : color;
+
+  let ring = '';
+  if (isSOS) {
+    ring = `
+    <div style="
+      position:absolute;top:50%;left:50%;
+      width:${body + 16}px;height:${body + 16}px;
+      margin-left:-${(body + 16) / 2}px;margin-top:-${(body + 16) / 2}px;
+      border:4px solid ${renderColor};border-radius:50%;
+      animation:sos-marker-pulse 1s ease-out infinite;
+    "></div>`;
+  } else if (isPulsing) {
+    ring = `
     <div style="
       position:absolute;top:50%;left:50%;
       width:${body + 8}px;height:${body + 8}px;
       margin-left:-${(body + 8) / 2}px;margin-top:-${(body + 8) / 2}px;
-      border:2.5px solid ${color};border-radius:50%;
+      border:2.5px solid ${renderColor};border-radius:50%;
       animation:marker-pulse 1.6s ease-out infinite;
-    "></div>` : '';
+    "></div>`;
+  }
 
   const html = `
     <div style="position:relative;width:${total}px;height:${total}px;
@@ -64,7 +80,7 @@ function makeMarkerIcon(color, initials, isSelf, isPulsing) {
       ${ring}
       <div style="
         width:${body}px;height:${body}px;border-radius:50%;
-        background:linear-gradient(135deg,${color}cc,${color});
+        background:linear-gradient(135deg,${renderColor}cc,${renderColor});
         display:flex;align-items:center;justify-content:center;
         font-family:-apple-system,sans-serif;font-weight:800;
         font-size:${isSelf ? 15 : 13}px;color:#fff;letter-spacing:-0.5px;
@@ -73,7 +89,7 @@ function makeMarkerIcon(color, initials, isSelf, isPulsing) {
       ">${initials}</div>
       ${isSelf ? `<div style="position:absolute;bottom:${(total - body) / 2 - 6}px;
         left:50%;transform:translateX(-50%);
-        width:8px;height:8px;background:${color};border-radius:50%;
+        width:8px;height:8px;background:${renderColor};border-radius:50%;
         border:2px solid #0f1117;z-index:2;"></div>` : ''}
     </div>`;
 
@@ -283,6 +299,15 @@ export default function TrackingPage() {
     return () => { active = false; };
   }, [routePoints]);
 
+  /* ── SOS auto-focus logic ── */
+  useEffect(() => {
+    const sosMembers = Object.values(members).filter(m => m.status === 'SOS' && m.lat !== 0);
+    if (sosMembers.length > 0) {
+      // Auto-focus on the first person screaming SOS
+      setFocusTarget(sosMembers[0]);
+    }
+  }, [members]);
+
   /* ── 1-second heartbeat for live timestamps ── */
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -316,12 +341,35 @@ export default function TrackingPage() {
     }
   };
 
+  const handleSOS = () => {
+    if (!sharing) {
+      handleAlert('⚠️ Start sharing your location first to send an SOS!');
+      return;
+    }
+    const myLoc = members[user?.userId];
+    if (myLoc) {
+      const sosPayload = { ...myLoc, status: 'SOS' };
+      publish(sosPayload);
+      locationApi.update(sosPayload).catch(() => {});
+      handleAlert('🚨 SOS SIGNAL SENT! 🚨');
+    }
+  };
+
+  const activeSOS = memberList.filter(m => m.status === 'SOS');
+  const isSOSMode = activeSOS.length > 0;
+
   return (
     <div style={S.page}>
       {/* ── Toast overlay ── */}
       {alerts.length > 0 && (
         <div className="toast-container">
           {alerts.map(a => <div key={a.id} className="toast">{a.msg}</div>)}
+        </div>
+      )}
+
+      {isSOSMode && (
+        <div className="sos-banner">
+          🚨 EMERGENCY: {activeSOS.map(m => m.userName).join(', ')} HAS TRIGGERED SOS! 🚨
         </div>
       )}
 
@@ -456,6 +504,7 @@ export default function TrackingPage() {
               const color     = colorMap[loc.userId] || PALETTE[0];
               const initials  = (loc.userName || '?').slice(0, 2).toUpperCase();
               const isPulsing = loc.timestamp && (Date.now() - loc.timestamp) < 5000;
+              const isSOS     = loc.status === 'SOS';
               const trail     = trails[loc.userId] || [];
 
               return (
@@ -465,7 +514,8 @@ export default function TrackingPage() {
                     <CircleMarker key={`t-${loc.userId}-${idx}`}
                       center={[tlat, tlng]} radius={3}
                       pathOptions={{
-                        color: color, fillColor: color,
+                        color: isSOS ? '#EF4444' : color, 
+                        fillColor: isSOS ? '#EF4444' : color,
                         fillOpacity: ((idx + 1) / trail.length) * 0.45,
                         opacity: 0, weight: 0,
                       }} />
@@ -474,13 +524,13 @@ export default function TrackingPage() {
                   {/* Accuracy circle (own marker only) */}
                   {isSelf && accuracy && (
                     <CircleMarker center={[loc.lat, loc.lng]} radius={0}
-                      pathOptions={{ color, fillColor: color, fillOpacity: 0.07, weight: 1 }}>
+                      pathOptions={{ color: isSOS ? '#EF4444' : color, fillColor: isSOS ? '#EF4444' : color, fillOpacity: 0.07, weight: 1 }}>
                     </CircleMarker>
                   )}
 
                   <Marker
                     position={[loc.lat, loc.lng]}
-                    icon={makeMarkerIcon(color, initials, isSelf, isPulsing)}>
+                    icon={makeMarkerIcon(color, initials, isSelf, isPulsing, isSOS)}>
                     <Popup>
                       <div style={S.popup}>
                         <div style={{ ...S.popupDot, background: color }} />
@@ -507,6 +557,11 @@ export default function TrackingPage() {
               );
             })}
           </MapContainer>
+          
+          {/* ── SOS Floating Action Button ── */}
+          <button style={S.sosBtn} onClick={handleSOS} title="Trigger Emergency SOS">
+            SOS
+          </button>
         </div>
 
         {panelOpen && (
@@ -675,5 +730,13 @@ const S = {
   routeToolbar: {
     background: 'var(--primary-light)', padding: '8px 18px', display: 'flex',
     alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', flexShrink: 0
+  },
+  sosBtn: {
+    position: 'absolute', bottom: 24, right: 24, zIndex: 1000,
+    background: '#EF4444', color: '#fff', border: 'none', borderRadius: '50%',
+    width: 64, height: 64, fontSize: '1.2rem', fontWeight: 900,
+    boxShadow: '0 4px 20px rgba(239, 68, 68, 0.6), inset 0 -4px 0 rgba(0,0,0,0.2)',
+    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    transition: 'transform 0.2s', letterSpacing: '1px'
   }
 };
