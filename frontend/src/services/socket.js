@@ -1,50 +1,65 @@
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
-let stompClient = null;
+/**
+ * socket.js — thin STOMP client factory.
+ *
+ * All reactive logic (state tracking, subscriptions) lives in the
+ * useWebSocket hook. This module just creates/destroys the client.
+ */
 
-export const connectSocket = (groupId, onLocation, onAlert) => {
-  stompClient = new Client({
+let _client = null;
+
+/**
+ * Create and activate a STOMP client.
+ *
+ * @param {object} handlers
+ * @param {Function} handlers.onConnect   - Called when STOMP handshake completes
+ * @param {Function} handlers.onDisconnect - Called when session closes
+ * @param {Function} handlers.onError     - Called on STOMP protocol error
+ */
+export function createClient({ onConnect, onDisconnect, onError }) {
+  if (_client) {
+    _client.deactivate();
+    _client = null;
+  }
+
+  const token = localStorage.getItem('sc_token') || '';
+
+  _client = new Client({
     webSocketFactory: () => new SockJS('/ws'),
-    reconnectDelay: 5000,
-    onConnect: () => {
-      console.log('[WS] Connected');
-
-      // Subscribe to location broadcasts
-      stompClient.subscribe(`/topic/group/${groupId}`, (msg) => {
-        try {
-          const data = JSON.parse(msg.body);
-          onLocation(data);
-        } catch (e) {
-          console.error('[WS] Failed to parse location message', e);
-        }
-      });
-
-      // Subscribe to alerts
-      stompClient.subscribe(`/topic/alerts/${groupId}`, (msg) => {
-        onAlert(msg.body);
-      });
+    // Send JWT in STOMP CONNECT frame — picked up by WebSocketChannelInterceptor
+    connectHeaders: {
+      Authorization: `Bearer ${token}`,
     },
-    onStompError: (frame) => {
-      console.error('[WS] STOMP error:', frame);
-    }
+    reconnectDelay: 4000,
+    onConnect,
+    onDisconnect,
+    onStompError: onError,
   });
 
-  stompClient.activate();
-};
+  _client.activate();
+  return _client;
+}
 
-export const sendLocation = (userId, groupId, lat, lng, status = 'ONLINE') => {
-  if (stompClient && stompClient.connected) {
-    stompClient.publish({
+/**
+ * Publish a location update directly over the WebSocket connection.
+ * Returns true if the message was published, false if WS is not connected.
+ */
+export function publishLocation(payload) {
+  if (_client?.connected) {
+    _client.publish({
       destination: '/app/location.update',
-      body: JSON.stringify({ userId, groupId, lat, lng, status }),
+      body: JSON.stringify(payload),
     });
+    return true;
   }
-};
+  return false;
+}
 
-export const disconnectSocket = () => {
-  if (stompClient) {
-    stompClient.deactivate();
-    stompClient = null;
+export function destroyClient() {
+  if (_client) {
+    _client.deactivate();
+    _client = null;
   }
-};
+}

@@ -313,3 +313,51 @@ body {
 .leaflet-control-attribution a {
   color: var(--primary) !important;
 }
+
+/* ══════════════════════════════════════════
+   Phase 4 — Real-Time / Army-Style
+   ══════════════════════════════════════════ */
+
+/* ── Smooth marker glide ──────────────────
+   Leaflet positions markers with CSS transform.
+   Adding a transition here makes ALL markers
+   animate smoothly to new GPS positions.     */
+.leaflet-marker-icon {
+  transition: transform 0.85s cubic-bezier(0.25, 0.1, 0.25, 1) !important;
+}
+
+/* ── Map marker pulse ring ──────────────── */
+@keyframes marker-pulse {
+  0%   { transform: translate(-50%, -50%) scale(1);   opacity: 0.85; }
+  70%  { transform: translate(-50%, -50%) scale(1.9); opacity: 0.2;  }
+  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0;    }
+}
+
+/* ── Member panel row pulse ring ─────────── */
+@keyframes member-pulse {
+  0%   { transform: scale(1);   opacity: 0.85; }
+  70%  { transform: scale(1.6); opacity: 0.2;  }
+  100% { transform: scale(1.9); opacity: 0;    }
+}
+
+/* ── WS connected dot pulse ─────────────── */
+@keyframes ws-dot-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1);   }
+  50%       { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* ── Leaflet popup dark theme ───────────── */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--bg-card) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.leaflet-popup-content {
+  margin: 10px 12px !important;
+}
+
+/* ── Prevent map clicks from firing on markers ── */
+.leaflet-marker-icon { cursor: pointer; }

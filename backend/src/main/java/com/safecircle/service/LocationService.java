@@ -65,6 +65,30 @@ public class LocationService {
                 .stream().map(this::toResponse).collect(Collectors.toList());
     }
 
+    /**
+     * Called immediately when a WebSocket session disconnects.
+     * Marks the user OFFLINE in every group they were active in and broadcasts
+     * the change so other members see it in real-time (no polling lag).
+     */
+    public void markUserOffline(String userId) {
+        locationRepository.findByUserId(userId).forEach(loc -> {
+            if (!"OFFLINE".equals(loc.getStatus())) {
+                loc.setStatus("OFFLINE");
+                loc.setTimestamp(System.currentTimeMillis());
+                locationRepository.save(loc);
+
+                // Broadcast updated location so clients update the marker
+                messagingTemplate.convertAndSend("/topic/group/" + loc.getGroupId(), toResponse(loc));
+                // Show a toast to group members
+                messagingTemplate.convertAndSend(
+                        "/topic/alerts/" + loc.getGroupId(),
+                        "📡 " + loc.getUserName() + " disconnected");
+                log.info("[WS] Marked user {} OFFLINE in group {} (instant disconnect)",
+                        userId, loc.getGroupId());
+            }
+        });
+    }
+
     @Scheduled(fixedRate = 15_000)
     public void detectOfflineUsers() {
         long threshold = System.currentTimeMillis() - OFFLINE_THRESHOLD_MS;

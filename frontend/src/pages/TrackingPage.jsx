@@ -1,16 +1,14 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import {
-  MapContainer, TileLayer, Marker, Popup, useMap, Circle,
-} from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, CircleMarker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { groupApi, locationApi } from '../services/api';
-import { connectSocket, disconnectSocket } from '../services/socket';
 import { useAuth } from '../context/AuthContext';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { useLocationSharing } from '../hooks/useLocationSharing';
 
-/* ─── Leaflet default-icon fix for Vite bundler ─── */
+/* ─── Leaflet icon fix for Vite ─── */
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -18,400 +16,470 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-/* ─── Palette: a distinct color per member (cycles) ─── */
+/* ─── Color palette ─── */
 const PALETTE = [
   '#2563EB', '#10B981', '#F59E0B', '#EF4444',
   '#8B5CF6', '#06B6D4', '#EC4899', '#14B8A6',
 ];
 
-/** Build a circular SVG marker DivIcon for a given color & initials */
-function makeCustomIcon(color, initials, isSelf) {
-  const size = isSelf ? 42 : 36;
-  const ring = isSelf ? `stroke="${color}" stroke-width="3"` : '';
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size + 8}" height="${size + 8}" viewBox="0 0 ${size + 8} ${size + 8}">
-      <circle cx="${(size + 8) / 2}" cy="${(size + 8) / 2}" r="${size / 2 + 1}" fill="${color}22" ${ring}/>
-      <circle cx="${(size + 8) / 2}" cy="${(size + 8) / 2}" r="${size / 2 - 1}" fill="${color}"/>
-      <text x="${(size + 8) / 2}" y="${(size + 8) / 2 + 5}" text-anchor="middle"
-            font-size="${isSelf ? 14 : 12}" font-weight="700" fill="white" font-family="system-ui,sans-serif">
-        ${initials}
-      </text>
-    </svg>`;
+/* ─── Simple equirectangular distance (metres) ─── */
+function approxDist(lat1, lng1, lat2, lng2) {
+  const R  = 6_371_000;
+  const dL = (lat2 - lat1) * Math.PI / 180;
+  const dx = (lng2 - lng1) * Math.PI / 180 * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
+  return Math.sqrt(dL * dL + dx * dx) * R;
+}
+
+/* ─── Relative time ─── */
+function relTime(ts) {
+  if (!ts) return '';
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 10) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
+}
+
+/* ─── Army-style custom marker ─── */
+function makeMarkerIcon(color, initials, isSelf, isPulsing) {
+  const body   = isSelf ? 44 : 38;
+  const total  = body + 32; // room for pulse ring
+  const half   = total / 2;
+  const glow   = isSelf
+    ? `box-shadow:0 0 0 3px rgba(255,255,255,0.25),0 4px 20px ${color}99;`
+    : `box-shadow:0 2px 10px ${color}66;`;
+
+  const ring = isPulsing ? `
+    <div style="
+      position:absolute;top:50%;left:50%;
+      width:${body + 8}px;height:${body + 8}px;
+      margin-left:-${(body + 8) / 2}px;margin-top:-${(body + 8) / 2}px;
+      border:2.5px solid ${color};border-radius:50%;
+      animation:marker-pulse 1.6s ease-out infinite;
+    "></div>` : '';
+
+  const html = `
+    <div style="position:relative;width:${total}px;height:${total}px;
+                display:flex;align-items:center;justify-content:center;">
+      ${ring}
+      <div style="
+        width:${body}px;height:${body}px;border-radius:50%;
+        background:linear-gradient(135deg,${color}cc,${color});
+        display:flex;align-items:center;justify-content:center;
+        font-family:-apple-system,sans-serif;font-weight:800;
+        font-size:${isSelf ? 15 : 13}px;color:#fff;letter-spacing:-0.5px;
+        border:2.5px solid rgba(255,255,255,0.25);
+        ${glow}position:relative;z-index:1;
+      ">${initials}</div>
+      ${isSelf ? `<div style="position:absolute;bottom:${(total - body) / 2 - 6}px;
+        left:50%;transform:translateX(-50%);
+        width:8px;height:8px;background:${color};border-radius:50%;
+        border:2px solid #0f1117;z-index:2;"></div>` : ''}
+    </div>`;
+
   return L.divIcon({
-    html: svg,
+    html,
     className: '',
-    iconSize:   [size + 8, size + 8],
-    iconAnchor: [(size + 8) / 2, (size + 8) / 2],
-    popupAnchor: [0, -(size / 2 + 4)],
+    iconSize:   [total, total],
+    iconAnchor: [half, half],
+    popupAnchor:[0, -(body / 2 + 4)],
   });
 }
 
-/* ─── Subcomponent: recenter & fit-bounds ─── */
+/* ─── Map controller: fit bounds + flyTo ─── */
 function MapController({ members, focusTarget }) {
   const map = useMap();
 
-  // Fit all online markers on initial load or when members change
+  // Fit all online markers on first meaningful load
+  const fittedRef = useRef(false);
   useEffect(() => {
+    if (fittedRef.current) return;
     const online = Object.values(members).filter(m => m.lat !== 0 && m.lng !== 0);
     if (online.length === 0) return;
-    const bounds = L.latLngBounds(online.map(m => [m.lat, m.lng]));
-    map.fitBounds(bounds.pad(0.25), { maxZoom: 16, animate: true });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    fittedRef.current = true;
+    map.fitBounds(L.latLngBounds(online.map(m => [m.lat, m.lng])).pad(0.3),
+      { maxZoom: 16, animate: true });
+  }, [members, map]);
 
-  // Pan to a focused member
+  // Pan smoothly when a member is clicked
   useEffect(() => {
-    if (focusTarget && focusTarget.lat !== 0) {
-      map.flyTo([focusTarget.lat, focusTarget.lng], 16, { duration: 1.2 });
+    if (focusTarget?.lat && focusTarget.lat !== 0) {
+      map.flyTo([focusTarget.lat, focusTarget.lng], 16, { duration: 1.1 });
     }
   }, [focusTarget, map]);
 
   return null;
 }
 
-/* ─── Relative time helper ─── */
-function relTime(ts) {
-  if (!ts) return '';
-  const secs = Math.floor((Date.now() - ts) / 1000);
-  if (secs < 10) return 'just now';
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  return `${Math.floor(mins / 60)}h ago`;
-}
+/* ─── WS Status config ─── */
+const WS_CFG = {
+  CONNECTED:    { label: 'LIVE',    dot: '#10B981', bg: 'rgba(16,185,129,0.12)',  color: '#10B981', pulse: true },
+  CONNECTING:   { label: 'SYNC…',  dot: '#F59E0B', bg: 'rgba(245,158,11,0.12)', color: '#F59E0B', pulse: false },
+  DISCONNECTED: { label: 'OFFLINE', dot: '#EF4444', bg: 'rgba(239,68,68,0.12)',  color: '#EF4444', pulse: false },
+};
 
-/* ════════════════════════════════════════════
-   Main Page
-   ════════════════════════════════════════════ */
+/* ════════════════════════════════════
+   Main Component
+   ════════════════════════════════════ */
 export default function TrackingPage() {
   const { groupId } = useParams();
   const { user }    = useAuth();
   const navigate    = useNavigate();
 
   const [group,       setGroup]       = useState(null);
-  const [members,     setMembers]     = useState({});   // userId → LocationResponse
+  const [members,     setMembers]     = useState({});
+  const [trails,      setTrails]      = useState({});  // userId → [[lat,lng],…]
+  const [speeds,      setSpeeds]      = useState({});  // userId → km/h
   const [alerts,      setAlerts]      = useState([]);
   const [focusTarget, setFocusTarget] = useState(null);
-  const [panelOpen,   setPanelOpen]   = useState(true); // mobile toggle
+  const [colorMap,    setColorMap]    = useState({});
+  const [panelOpen,   setPanelOpen]   = useState(true);
   const [lastPoll,    setLastPoll]    = useState(null);
-  const [colorMap,    setColorMap]    = useState({});   // userId → color
+  const [, setTick]                   = useState(0);   // heartbeat for live clock
 
-  const alertTimers = useRef([]);
+  const alertTimers   = useRef([]);
+  const prevMembers   = useRef({});  // tracks previous positions for speed calc
 
-  const { sharing, accuracy, gpsError, startSharing, stopSharing } =
-    useLocationSharing(groupId);
-
-  /* ── Assign stable colors to members ── */
+  /* ── Assign stable colors ── */
   const assignColor = useCallback((uid) => {
     setColorMap(prev => {
       if (prev[uid]) return prev;
-      const idx = Object.keys(prev).length % PALETTE.length;
-      return { ...prev, [uid]: PALETTE[idx] };
+      return { ...prev, [uid]: PALETTE[Object.keys(prev).length % PALETTE.length] };
     });
   }, []);
 
-  /* ── Polling + initial load ── */
+  /* ── Location update handler (from WS) ── */
+  const handleLocation = useCallback((loc) => {
+    assignColor(loc.userId);
+
+    // Speed calculation from previous position
+    const prev = prevMembers.current[loc.userId];
+    if (prev && prev.lat !== 0 && loc.lat !== 0 && prev.timestamp && loc.timestamp) {
+      const dist = approxDist(prev.lat, prev.lng, loc.lat, loc.lng);
+      const dt   = (loc.timestamp - prev.timestamp) / 1000;
+      if (dt > 0.5 && dt < 120) {
+        setSpeeds(s => ({ ...s, [loc.userId]: Math.round(dist / dt * 3.6) }));
+      }
+    }
+    prevMembers.current = { ...prevMembers.current, [loc.userId]: loc };
+
+    // Breadcrumb trail
+    if (loc.lat !== 0 && loc.lng !== 0) {
+      setTrails(t => {
+        const arr = t[loc.userId] || [];
+        return { ...t, [loc.userId]: [...arr, [loc.lat, loc.lng]].slice(-8) };
+      });
+    }
+
+    setMembers(m => ({ ...m, [loc.userId]: loc }));
+  }, [assignColor]);
+
+  /* ── Alert handler ── */
+  const handleAlert = useCallback((msg) => {
+    const id = Date.now();
+    setAlerts(a => [{ id, msg }, ...a.slice(0, 4)]);
+    const t = setTimeout(() => setAlerts(a => a.filter(x => x.id !== id)), 6000);
+    alertTimers.current.push(t);
+  }, []);
+
+  /* ── WebSocket ── */
+  const { wsState, publish } = useWebSocket(groupId, handleLocation, handleAlert);
+
+  /* ── GPS sharing ── */
+  const { sharing, accuracy, gpsError, startSharing, stopSharing } =
+    useLocationSharing(groupId, publish);
+
+  /* ── Polling (initial load + fallback) ── */
   useEffect(() => {
     const fetchAll = () => {
       groupApi.get(groupId).then(r => setGroup(r.data)).catch(() => {});
       locationApi.getGroup(groupId).then(r => {
-        const map = {};
         r.data.forEach(loc => {
-          map[loc.userId] = loc;
           assignColor(loc.userId);
+          prevMembers.current[loc.userId] = loc;
         });
-        setMembers(map);
+        setMembers(m => {
+          const next = { ...m };
+          r.data.forEach(loc => { next[loc.userId] = loc; });
+          return next;
+        });
         setLastPoll(Date.now());
       }).catch(() => {});
     };
-
     fetchAll();
-    const interval = setInterval(fetchAll, 10_000);
-    return () => clearInterval(interval);
+    const id = setInterval(fetchAll, 10_000);
+    return () => clearInterval(id);
   }, [groupId, assignColor]);
 
-  /* ── WebSocket live updates ── */
+  /* ── 1-second heartbeat for live timestamps ── */
   useEffect(() => {
-    connectSocket(
-      groupId,
-      (loc) => {
-        assignColor(loc.userId);
-        setMembers(prev => ({ ...prev, [loc.userId]: loc }));
-      },
-      (alertMsg) => {
-        const id = Date.now();
-        setAlerts(prev => [{ id, msg: alertMsg }, ...prev.slice(0, 4)]);
-        const t = setTimeout(
-          () => setAlerts(prev => prev.filter(a => a.id !== id)),
-          6000,
-        );
-        alertTimers.current.push(t);
-      },
-    );
-    return () => {
-      disconnectSocket();
-      alertTimers.current.forEach(clearTimeout);
-    };
-  }, [groupId, assignColor]);
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
 
-  /* ── Derived data ── */
+  /* ── Cleanup ── */
+  useEffect(() => () => alertTimers.current.forEach(clearTimeout), []);
+
+  /* ── Derived ── */
   const memberList  = Object.values(members);
   const onlineCount = memberList.filter(m => m.status === 'ONLINE').length;
+  const wsCfg       = WS_CFG[wsState] || WS_CFG.CONNECTING;
 
-  /* ── Locate-me: pan to own position ── */
   const locateMe = () => {
-    if (user && members[user.userId]) {
-      setFocusTarget(members[user.userId]);
-    }
+    if (user?.userId && members[user.userId]) setFocusTarget(members[user.userId]);
   };
 
   return (
-    <div style={styles.page}>
-      {/* ── Toast Alerts ── */}
+    <div style={S.page}>
+      {/* ── Toast overlay ── */}
       {alerts.length > 0 && (
         <div className="toast-container">
-          {alerts.map(a => (
-            <div key={a.id} className="toast">{a.msg}</div>
-          ))}
+          {alerts.map(a => <div key={a.id} className="toast">{a.msg}</div>)}
         </div>
       )}
 
-      {/* ── Header ── */}
-      <header style={styles.header}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button
-            id="back-to-dashboard-btn"
-            className="btn btn-ghost"
-            style={{ padding: '6px 14px', fontSize: '0.85rem' }}
-            onClick={() => navigate('/dashboard')}
-          >
-            ← Back
-          </button>
-          <div>
-            <h1 style={styles.groupName}>{group?.name || 'Loading…'}</h1>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 2 }}>
-              <span className="live-badge">Live</span>
+      {/* ══ HEADER ══════════════════════════════════════════════════════ */}
+      <header style={S.header}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          <button id="back-btn" className="btn btn-ghost"
+            style={{ padding: '6px 14px', fontSize: '0.82rem', flexShrink: 0 }}
+            onClick={() => navigate('/dashboard')}>← Back</button>
+
+          <div style={{ minWidth: 0 }}>
+            <h1 style={S.groupName}>{group?.name || 'Loading…'}</h1>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 2, flexWrap: 'wrap' }}>
+              {/* WS status pill */}
+              <span style={{ ...S.wsPill, background: wsCfg.bg, color: wsCfg.color, border: `1px solid ${wsCfg.dot}44` }}>
+                <span style={{
+                  ...S.wsDot,
+                  background: wsCfg.dot,
+                  animation: wsCfg.pulse ? 'pulse 1.5s infinite' : 'none',
+                }} />
+                {wsCfg.label}
+              </span>
+
               {group?.inviteCode && (
-                <span style={styles.code}>{group.inviteCode}</span>
+                <span style={S.codeTag}>{group.inviteCode}</span>
               )}
-              <span style={styles.onlinePill}>
-                <span style={styles.onlineDot} />
+              <span style={S.onlinePill}>
+                <span style={S.onlineDot} />
                 {onlineCount} online
               </span>
             </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Last-updated timestamp */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           {lastPoll && (
-            <span style={styles.pollLabel}>Polled {relTime(lastPoll)}</span>
+            <span style={S.pollLabel}>↻ {relTime(lastPoll)}</span>
           )}
-
-          {/* Locate-me */}
-          <button
-            id="locate-me-btn"
-            className="btn btn-ghost"
-            style={{ padding: '8px 14px', fontSize: '0.85rem' }}
-            onClick={locateMe}
-            title="Centre on my location"
-          >
+          <button id="locate-me-btn" className="btn btn-ghost"
+            style={{ padding: '8px 12px' }} onClick={locateMe} title="Centre on me">
             🎯
           </button>
-
-          {/* Share toggle */}
           <button
             id={sharing ? 'stop-sharing-btn' : 'start-sharing-btn'}
             className={`btn ${sharing ? 'btn-danger' : 'btn-secondary'}`}
             onClick={sharing ? stopSharing : startSharing}
-            style={{ padding: '10px 20px' }}
-          >
-            {sharing ? '⏹ Stop' : '📡 Share Location'}
+            style={{ padding: '10px 20px' }}>
+            {sharing ? '⏹ Stop' : '📡 Share'}
           </button>
-
-          {/* Mobile panel toggle */}
-          <button
-            id="toggle-panel-btn"
-            className="btn btn-ghost"
-            style={{ padding: '8px 12px', display: 'none' }}
-            onClick={() => setPanelOpen(v => !v)}
-            title="Toggle members panel"
-          >
+          <button id="toggle-panel-btn" className="btn btn-ghost"
+            style={{ padding: '8px 12px' }}
+            onClick={() => setPanelOpen(v => !v)} title="Toggle panel">
             👥
           </button>
         </div>
       </header>
 
-      {/* ── Accuracy / GPS error banner ── */}
+      {/* ── GPS status bar ── */}
       {(sharing || gpsError) && (
         <div style={{
-          ...styles.gpsBar,
-          background: gpsError ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.08)',
-          borderBottom: `1px solid ${gpsError ? 'rgba(239,68,68,0.25)' : 'rgba(16,185,129,0.2)'}`,
+          ...S.gpsBar,
+          background: gpsError ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.07)',
+          borderBottom: `1px solid ${gpsError ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.18)'}`,
         }}>
-          {gpsError ? (
-            <span style={{ color: 'var(--danger)' }}>⚠️ GPS error: {gpsError}</span>
-          ) : (
-            <span style={{ color: 'var(--secondary)' }}>
-              📡 Sharing — accuracy ±{accuracy ?? '…'}m
-            </span>
-          )}
+          {gpsError
+            ? <span style={{ color: 'var(--danger)' }}>⚠️ GPS: {gpsError}</span>
+            : <span style={{ color: 'var(--secondary)' }}>
+                📡 Sharing · ±{accuracy ?? '…'}m · via {wsState === 'CONNECTED' ? 'WebSocket' : 'HTTP'}
+              </span>}
         </div>
       )}
 
-      {/* ── Main layout ── */}
-      <div style={styles.body}>
-        {/* Map */}
-        <div style={styles.mapWrapper}>
+      {/* ══ BODY ═══════════════════════════════════════════════════════ */}
+      <div style={S.body}>
+
+        {/* ── Map ── */}
+        <div style={S.mapWrapper}>
           <MapContainer
-            center={[28.6139, 77.2090]}
-            zoom={13}
+            center={[28.6139, 77.2090]} zoom={13}
             style={{ width: '100%', height: '100%' }}
-            zoomControl={false}
-          >
+            zoomControl={false}>
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              className="map-tiles"
-            />
+              className="map-tiles" />
 
             <MapController members={members} focusTarget={focusTarget} />
 
             {memberList.map(loc => {
               if (loc.lat === 0 && loc.lng === 0) return null;
-              const isSelf  = loc.userId === user?.userId;
-              const color   = colorMap[loc.userId] || PALETTE[0];
-              const initials = (loc.userName || '?').slice(0, 2).toUpperCase();
-              const icon = makeCustomIcon(color, initials, isSelf);
+              const isSelf    = loc.userId === user?.userId;
+              const color     = colorMap[loc.userId] || PALETTE[0];
+              const initials  = (loc.userName || '?').slice(0, 2).toUpperCase();
+              const isPulsing = loc.timestamp && (Date.now() - loc.timestamp) < 5000;
+              const trail     = trails[loc.userId] || [];
 
               return (
-                <Marker
-                  key={loc.userId}
-                  position={[loc.lat, loc.lng]}
-                  icon={icon}
-                >
-                  {/* Accuracy circle for self */}
+                <span key={loc.userId}>
+                  {/* Breadcrumb trail dots */}
+                  {trail.slice(0, -1).map(([tlat, tlng], idx) => (
+                    <CircleMarker key={`t-${loc.userId}-${idx}`}
+                      center={[tlat, tlng]} radius={3}
+                      pathOptions={{
+                        color: color, fillColor: color,
+                        fillOpacity: ((idx + 1) / trail.length) * 0.45,
+                        opacity: 0, weight: 0,
+                      }} />
+                  ))}
+
+                  {/* Accuracy circle (own marker only) */}
                   {isSelf && accuracy && (
-                    <Circle
-                      center={[loc.lat, loc.lng]}
-                      radius={accuracy}
-                      pathOptions={{ color, fillColor: color, fillOpacity: 0.08, weight: 1 }}
-                    />
+                    <CircleMarker center={[loc.lat, loc.lng]} radius={0}
+                      pathOptions={{ color, fillColor: color, fillOpacity: 0.07, weight: 1 }}>
+                    </CircleMarker>
                   )}
-                  <Popup>
-                    <div style={styles.popup}>
-                      <div style={{ ...styles.popupDot, background: color }} />
-                      <div>
-                        <strong style={{ display: 'block', fontSize: '0.9rem' }}>
-                          {loc.userName}{isSelf ? ' (you)' : ''}
-                        </strong>
-                        <span style={{ fontSize: '0.75rem', color: '#666' }}>
-                          {loc.status} · {relTime(loc.timestamp)}
-                        </span>
-                        <br />
-                        <span style={{ fontSize: '0.7rem', color: '#999' }}>
-                          {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}
-                        </span>
+
+                  <Marker
+                    position={[loc.lat, loc.lng]}
+                    icon={makeMarkerIcon(color, initials, isSelf, isPulsing)}>
+                    <Popup>
+                      <div style={S.popup}>
+                        <div style={{ ...S.popupDot, background: color }} />
+                        <div>
+                          <strong style={{ display: 'block', fontSize: '0.9rem' }}>
+                            {loc.userName}{isSelf ? ' (you)' : ''}
+                          </strong>
+                          <span style={{ fontSize: '0.75rem', color: '#555' }}>
+                            {loc.status} · {relTime(loc.timestamp)}
+                          </span>
+                          {speeds[loc.userId] > 0 && (
+                            <span style={{ display: 'block', fontSize: '0.72rem', color: '#777', marginTop: 2 }}>
+                              ⚡ {speeds[loc.userId]} km/h
+                            </span>
+                          )}
+                          <span style={{ display: 'block', fontSize: '0.68rem', color: '#999', marginTop: 2 }}>
+                            {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  </Popup>
-                </Marker>
+                    </Popup>
+                  </Marker>
+                </span>
               );
             })}
           </MapContainer>
-
-          {/* Floating zoom controls replacement */}
-          <div style={styles.mapAttrib}>
-            OpenStreetMap
-          </div>
         </div>
 
-        {/* ── Members Panel ── */}
-        <aside style={{ ...styles.panel, display: panelOpen ? 'flex' : 'none' }}>
-          <div style={styles.panelHeader}>
-            <h2 style={styles.panelTitle}>Members ({memberList.length})</h2>
-            <span style={styles.onlineTag}>{onlineCount} online</span>
-          </div>
+        {/* ══ SIDE PANEL ═══════════════════════════════════════════════ */}
+        {panelOpen && (
+          <aside style={S.panel}>
+            <div style={S.panelHead}>
+              <span style={S.panelTitle}>Members ({memberList.length})</span>
+              <span style={S.onlineTag}>{onlineCount} online</span>
+            </div>
 
-          <div style={styles.memberList}>
-            {memberList.length === 0 && (
-              <div style={styles.emptyPanel}>
-                <span style={{ fontSize: 32 }}>📡</span>
-                <p>No members have shared their location yet.</p>
-                <p style={{ fontSize: '0.78rem', marginTop: 4 }}>
-                  Press <strong>Share Location</strong> to start.
-                </p>
-              </div>
-            )}
+            <div style={S.memberList}>
+              {memberList.length === 0 && (
+                <div style={S.emptyPanel}>
+                  <span style={{ fontSize: 36 }}>📡</span>
+                  <p>No members yet.</p>
+                  <p style={{ fontSize: '0.78rem', marginTop: 4 }}>
+                    Press <strong>Share</strong> to start.
+                  </p>
+                </div>
+              )}
 
-            {/* Sort: online first, then self first */}
-            {[...memberList]
-              .sort((a, b) => {
-                if (a.userId === user?.userId) return -1;
-                if (b.userId === user?.userId) return 1;
-                if (a.status === 'ONLINE' && b.status !== 'ONLINE') return -1;
-                if (b.status === 'ONLINE' && a.status !== 'ONLINE') return 1;
-                return 0;
-              })
-              .map(loc => (
-                <MemberRow
-                  key={loc.userId}
-                  loc={loc}
-                  isSelf={loc.userId === user?.userId}
-                  color={colorMap[loc.userId] || PALETTE[0]}
-                  onClick={() => setFocusTarget(loc)}
-                />
-              ))}
-          </div>
-        </aside>
+              {[...memberList]
+                .sort((a, b) => {
+                  if (a.userId === user?.userId) return -1;
+                  if (b.userId === user?.userId) return 1;
+                  if (a.status === 'ONLINE' && b.status !== 'ONLINE') return -1;
+                  if (b.status === 'ONLINE' && a.status !== 'ONLINE') return 1;
+                  return (b.timestamp || 0) - (a.timestamp || 0);
+                })
+                .map(loc => (
+                  <MemberRow key={loc.userId} loc={loc}
+                    isSelf={loc.userId === user?.userId}
+                    color={colorMap[loc.userId] || PALETTE[0]}
+                    speed={speeds[loc.userId]}
+                    onClick={() => setFocusTarget(loc)} />
+                ))}
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   );
 }
 
-/* ─── MemberRow ─── */
-function MemberRow({ loc, isSelf, color, onClick }) {
+/* ─── Member Row ─── */
+function MemberRow({ loc, isSelf, color, speed, onClick }) {
   const statusClass = {
-    ONLINE:  'badge-online',
-    OFFLINE: 'badge-offline',
-    NO_GPS:  'badge-no-gps',
+    ONLINE: 'badge-online', OFFLINE: 'badge-offline', NO_GPS: 'badge-no-gps',
   }[loc.status] || 'badge-offline';
 
+  const isPulsing = loc.timestamp && (Date.now() - loc.timestamp) < 5000;
+
   return (
-    <div className="member-item" onClick={onClick} style={styles.memberItem}>
-      {/* Color avatar */}
-      <div style={{ ...styles.avatar, background: color }}>
-        {(loc.userName || '?').slice(0, 1).toUpperCase()}
+    <div className="member-item" onClick={onClick} style={S.memberItem}>
+      {/* Avatar with optional pulse ring */}
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        {isPulsing && (
+          <div style={{
+            position: 'absolute', inset: -4,
+            border: `2px solid ${color}`,
+            borderRadius: '50%',
+            animation: 'member-pulse 1.8s ease-out infinite',
+          }} />
+        )}
+        <div style={{ ...S.avatar, background: color }}>
+          {(loc.userName || '?').slice(0, 1).toUpperCase()}
+        </div>
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: 6 }}>
-          {loc.userName}
-          {isSelf && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 400 }}>(you)</span>}
+        <div style={{ fontWeight: 600, fontSize: '0.88rem', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {loc.userName}
+          </span>
+          {isSelf && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 400 }}>(you)</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
           <span className={`badge ${statusClass}`}>
-            <span className="badge-dot" />
-            {loc.status}
+            <span className="badge-dot" />{loc.status}
           </span>
           {loc.timestamp > 0 && (
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+            <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
               {relTime(loc.timestamp)}
             </span>
           )}
         </div>
+        {/* Speed badge */}
+        {speed > 0 && loc.status === 'ONLINE' && (
+          <div style={S.speedBadge}>⚡ {speed} km/h</div>
+        )}
+        {/* Coordinates */}
         {loc.lat !== 0 && (
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+          <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)', marginTop: 2 }}>
             {loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}
           </div>
         )}
       </div>
 
       {loc.status === 'ONLINE' && loc.lat !== 0 && (
-        <button
-          style={styles.pinBtn}
-          title="Pan to member"
-          onClick={e => { e.stopPropagation(); onClick(); }}
-        >
+        <button style={S.pinBtn} title="Fly to" onClick={e => { e.stopPropagation(); onClick(); }}>
           📍
         </button>
       )}
@@ -420,160 +488,62 @@ function MemberRow({ loc, isSelf, color, onClick }) {
 }
 
 /* ─── Styles ─── */
-const styles = {
-  page: {
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    background: 'var(--bg)',
+const S = {
+  page:       { height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  header:     {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '10px 18px', borderBottom: '1px solid var(--border)',
+    background: 'var(--bg-card)', flexShrink: 0, gap: 12, flexWrap: 'wrap',
   },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '10px 20px',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-card)',
-    flexShrink: 0,
-    gap: 12,
-    flexWrap: 'wrap',
+  groupName:  { fontSize: '1rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  wsPill:     {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    borderRadius: 20, padding: '2px 10px',
+    fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em',
   },
-  groupName: { fontSize: '1.05rem', fontWeight: 800 },
-  code: {
-    background: 'var(--primary-light)',
-    color: 'var(--primary)',
-    borderRadius: 6,
-    padding: '2px 8px',
-    fontSize: '0.72rem',
-    fontWeight: 700,
-    letterSpacing: '0.1em',
+  wsDot:      { width: 7, height: 7, borderRadius: '50%', flexShrink: 0 },
+  codeTag:    {
+    background: 'var(--primary-light)', color: 'var(--primary)',
+    borderRadius: 6, padding: '2px 8px', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.1em',
   },
   onlinePill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 5,
-    background: 'rgba(16,185,129,0.1)',
-    color: 'var(--secondary)',
-    borderRadius: 20,
-    padding: '2px 10px',
-    fontSize: '0.72rem',
-    fontWeight: 700,
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    background: 'rgba(16,185,129,0.1)', color: 'var(--secondary)',
+    borderRadius: 20, padding: '2px 9px', fontSize: '0.7rem', fontWeight: 700,
   },
-  onlineDot: {
-    width: 6,
-    height: 6,
-    borderRadius: '50%',
-    background: 'var(--secondary)',
+  onlineDot:  { width: 6, height: 6, borderRadius: '50%', background: 'var(--secondary)' },
+  pollLabel:  { fontSize: '0.7rem', color: 'var(--text-muted)' },
+  gpsBar:     { padding: '5px 18px', fontSize: '0.8rem', flexShrink: 0 },
+  body:       { flex: 1, display: 'flex', overflow: 'hidden' },
+  mapWrapper: { flex: 1, overflow: 'hidden' },
+  panel:      {
+    width: 295, flexShrink: 0, background: 'var(--bg-card)',
+    borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
-  pollLabel: {
-    fontSize: '0.72rem',
-    color: 'var(--text-muted)',
-    display: 'none',   // shown via CSS @media in style block below
+  panelHead:  {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '13px 16px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0,
   },
-  gpsBar: {
-    padding: '6px 20px',
-    fontSize: '0.82rem',
-    flexShrink: 0,
+  panelTitle: { fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' },
+  onlineTag:  { fontSize: '0.7rem', fontWeight: 700, color: 'var(--secondary)', background: 'rgba(16,185,129,0.1)', borderRadius: 20, padding: '2px 8px' },
+  memberList: { flex: 1, overflowY: 'auto', padding: '4px 8px' },
+  memberItem: { display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid var(--border)' },
+  avatar:     {
+    width: 36, height: 36, borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontWeight: 800, fontSize: '0.9rem', color: '#fff', flexShrink: 0,
   },
-  body: {
-    flex: 1,
-    display: 'flex',
-    overflow: 'hidden',
-    position: 'relative',
+  speedBadge: {
+    fontSize: '0.68rem', color: 'var(--warning)',
+    background: 'rgba(245,158,11,0.1)', borderRadius: 4,
+    padding: '1px 6px', marginTop: 3, display: 'inline-block', fontWeight: 700,
   },
-  mapWrapper: {
-    flex: 1,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  mapAttrib: {
-    display: 'none',
-  },
-  panel: {
-    width: 300,
-    flexShrink: 0,
-    background: 'var(--bg-card)',
-    borderLeft: '1px solid var(--border)',
-    flexDirection: 'column',
-    overflow: 'hidden',
-  },
-  panelHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '14px 18px 10px',
-    borderBottom: '1px solid var(--border)',
-    flexShrink: 0,
-  },
-  panelTitle: {
-    fontSize: '0.8rem',
-    fontWeight: 700,
-    color: 'var(--text-secondary)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.08em',
-  },
-  onlineTag: {
-    fontSize: '0.72rem',
-    fontWeight: 700,
-    color: 'var(--secondary)',
-    background: 'rgba(16,185,129,0.1)',
-    borderRadius: 20,
-    padding: '2px 8px',
-  },
-  memberList: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '4px 10px',
-  },
-  memberItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    borderBottom: '1px solid var(--border)',
-  },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 700,
-    fontSize: '0.9rem',
-    flexShrink: 0,
-    color: '#fff',
-  },
-  pinBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '1rem',
-    padding: '4px',
-    flexShrink: 0,
-  },
+  pinBtn:     { background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', padding: '4px', flexShrink: 0 },
   emptyPanel: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 8,
-    padding: '40px 16px',
-    textAlign: 'center',
-    color: 'var(--text-secondary)',
-    fontSize: '0.85rem',
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    gap: 8, padding: '36px 16px', textAlign: 'center',
+    color: 'var(--text-secondary)', fontSize: '0.85rem',
   },
-  popup: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: 8,
-    padding: '4px 2px',
-    minWidth: 140,
-  },
-  popupDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    marginTop: 4,
-    flexShrink: 0,
-  },
+  popup:      { display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 2px', minWidth: 140 },
+  popupDot:   { width: 10, height: 10, borderRadius: '50%', marginTop: 4, flexShrink: 0 },
 };
