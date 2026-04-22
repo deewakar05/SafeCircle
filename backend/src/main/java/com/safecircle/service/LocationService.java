@@ -51,6 +51,7 @@ public class LocationService {
         location.setStatus(request.status() != null ? request.status() : "ONLINE");
         location.setTimestamp(System.currentTimeMillis());
         location.setUserName(userName);
+        location.setAccuracy(request.accuracy());
 
         locationRepository.save(location);
         LocationResponse response = toResponse(location);
@@ -106,6 +107,6 @@ public class LocationService {
 
     private LocationResponse toResponse(Location l) {
         return new LocationResponse(l.getUserId(), l.getUserName(), l.getGroupId(),
-                l.getLat(), l.getLng(), l.getStatus(), l.getTimestamp());
+                l.getLat(), l.getLng(), l.getStatus(), l.getTimestamp(), l.getAccuracy());
     }
 }

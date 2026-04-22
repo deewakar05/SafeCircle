@@ -261,6 +261,19 @@ body {
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* ========== Member Item Hover ========== */
+.member-item {
+  transition: var(--transition);
+  border-radius: var(--radius-sm);
+  padding: 10px 8px;
+  margin: 0 -8px;
+  cursor: pointer;
+}
+.member-item:hover {
+  background: var(--primary-light);
+}
 
 /* ========== Leaflet Map Fixes ========== */
 .leaflet-container {

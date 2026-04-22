@@ -1,9 +1,15 @@
 package com.safecircle.model;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 @Document(collection = "locations")
+@CompoundIndexes({
+    @CompoundIndex(name = "group_idx",      def = "{'groupId': 1}"),
+    @CompoundIndex(name = "user_group_idx", def = "{'userId': 1, 'groupId': 1}", unique = true),
+})
 public class Location {
     @Id
     private String id;
@@ -15,6 +21,7 @@ public class Location {
     private double lng;
     private String status;
     private long   timestamp;
+    private Double accuracy;  // GPS horizontal accuracy in metres (nullable)
 
     public Location() {}
 
@@ -49,12 +56,16 @@ public class Location {
     public long getTimestamp()                { return timestamp; }
     public void setTimestamp(long timestamp)  { this.timestamp = timestamp; }
 
+    public Double getAccuracy()                 { return accuracy; }
+    public void   setAccuracy(Double accuracy)  { this.accuracy = accuracy; }
+
     public static Builder builder() { return new Builder(); }
 
     public static class Builder {
         private String id, userId, groupId, userName, status;
         private double lat, lng;
-        private long timestamp;
+        private long   timestamp;
+        private Double accuracy;
 
         public Builder id(String v)         { id = v;        return this; }
         public Builder userId(String v)     { userId = v;    return this; }
@@ -64,8 +75,11 @@ public class Location {
         public Builder lng(double v)        { lng = v;       return this; }
         public Builder status(String v)     { status = v;    return this; }
         public Builder timestamp(long v)    { timestamp = v; return this; }
+        public Builder accuracy(Double v)   { accuracy = v;  return this; }
         public Location build() {
-            return new Location(id, userId, groupId, userName, lat, lng, status, timestamp);
+            Location l = new Location(id, userId, groupId, userName, lat, lng, status, timestamp);
+            l.setAccuracy(accuracy);
+            return l;
         }
     }
 }
