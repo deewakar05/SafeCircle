@@ -2,7 +2,6 @@ package com.safecircle.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.safecircle.dto.AuthRequest.SignupRequest;
-import com.safecircle.dto.AuthRequest.LoginRequest;
 import com.safecircle.dto.GroupDto.CreateGroupRequest;
 import com.safecircle.dto.GroupDto.JoinGroupRequest;
 import com.safecircle.repository.GroupRepository;
