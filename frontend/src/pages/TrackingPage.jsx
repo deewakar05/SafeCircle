@@ -210,11 +210,19 @@ export default function TrackingPage() {
   const alertTimers   = useRef([]);
   const prevMembers   = useRef({});  // tracks previous positions for speed calc
 
-  /* ── Assign stable colors ── */
+  /* ── Assign stable, consistent colors via djb2 hash on userId ── */
   const assignColor = useCallback((uid) => {
     setColorMap(prev => {
       if (prev[uid]) return prev;
-      return { ...prev, [uid]: PALETTE[Object.keys(prev).length % PALETTE.length] };
+      // Hash the userId so the same user always gets the same color
+      // regardless of connection order or page refresh
+      let hash = 5381;
+      for (let i = 0; i < uid.length; i++) {
+        hash = ((hash << 5) + hash) + uid.charCodeAt(i);
+        hash |= 0; // keep 32-bit
+      }
+      const color = PALETTE[Math.abs(hash) % PALETTE.length];
+      return { ...prev, [uid]: color };
     });
   }, []);
 
@@ -595,6 +603,7 @@ export default function TrackingPage() {
                     isSelf={loc.userId === user?.userId}
                     color={colorMap[loc.userId] || PALETTE[0]}
                     speed={speeds[loc.userId]}
+                    now={now}
                     onClick={() => setFocusTarget(loc)} />
                 ))}
             </div>
@@ -606,7 +615,7 @@ export default function TrackingPage() {
 }
 
 /* ─── Member Row ─── */
-function MemberRow({ loc, isSelf, color, speed, onClick }) {
+function MemberRow({ loc, isSelf, color, speed, now, onClick }) {
   const statusClass = {
     ONLINE: 'badge-online', OFFLINE: 'badge-offline', NO_GPS: 'badge-no-gps',
   }[loc.status] || 'badge-offline';

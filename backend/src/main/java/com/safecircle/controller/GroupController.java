@@ -11,16 +11,18 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/groups")
 public class GroupController {
 
-    private final GroupService groupService;
+    private final GroupService   groupService;
     private final UserRepository userRepository;
 
     @Autowired
     public GroupController(GroupService groupService, UserRepository userRepository) {
-        this.groupService = groupService;
+        this.groupService   = groupService;
         this.userRepository = userRepository;
     }
 
@@ -38,13 +40,19 @@ public class GroupController {
         return ResponseEntity.ok(groupService.joinGroup(getUserId(userDetails), request));
     }
 
+    /**
+     * Get group details.
+     * Membership is validated inside {@link GroupService#getGroup} — non-members get 403.
+     */
     @GetMapping("/{id}")
-    public ResponseEntity<GroupResponse> getGroup(@PathVariable String id) {
-        return ResponseEntity.ok(groupService.getGroup(id));
+    public ResponseEntity<GroupResponse> getGroup(
+            @PathVariable String id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(groupService.getGroup(id, getUserId(userDetails)));
     }
 
     @GetMapping("/my")
-    public ResponseEntity<java.util.List<GroupResponse>> getMyGroups(
+    public ResponseEntity<List<GroupResponse>> getMyGroups(
             @AuthenticationPrincipal UserDetails userDetails) {
         return ResponseEntity.ok(groupService.getUserGroups(getUserId(userDetails)));
     }
@@ -73,6 +81,10 @@ public class GroupController {
             @Valid @RequestBody UpdateRouteRequest request) {
         return ResponseEntity.ok(groupService.updateRoute(id, getUserId(userDetails), request));
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // Helper
+    // ─────────────────────────────────────────────────────────────
 
     private String getUserId(UserDetails userDetails) {
         return userRepository.findByEmail(userDetails.getUsername())

@@ -16,15 +16,19 @@ import java.util.List;
 @RequestMapping("/api/locations")
 public class LocationController {
 
-    private final LocationService locationService;
-    private final UserRepository userRepository;
+    private final LocationService  locationService;
+    private final UserRepository   userRepository;
 
     @Autowired
     public LocationController(LocationService locationService, UserRepository userRepository) {
         this.locationService = locationService;
-        this.userRepository = userRepository;
+        this.userRepository  = userRepository;
     }
 
+    /**
+     * REST fallback for location updates (used when WebSocket is not available).
+     * Membership validation is handled inside {@link LocationService#updateLocation}.
+     */
     @PostMapping("/update")
     public ResponseEntity<LocationResponse> updateLocation(
             @AuthenticationPrincipal UserDetails userDetails,
@@ -32,10 +36,20 @@ public class LocationController {
         return ResponseEntity.ok(locationService.updateLocation(getUserId(userDetails), request));
     }
 
+    /**
+     * Initial load: returns all current member locations for a group.
+     * Membership validation is handled inside {@link LocationService#getGroupLocations}.
+     */
     @GetMapping("/group/{groupId}")
-    public ResponseEntity<List<LocationResponse>> getGroupLocations(@PathVariable String groupId) {
-        return ResponseEntity.ok(locationService.getGroupLocations(groupId));
+    public ResponseEntity<List<LocationResponse>> getGroupLocations(
+            @PathVariable String groupId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(locationService.getGroupLocations(groupId, getUserId(userDetails)));
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // Helper: resolve authenticated email → userId
+    // ─────────────────────────────────────────────────────────────
 
     private String getUserId(UserDetails userDetails) {
         return userRepository.findByEmail(userDetails.getUsername())

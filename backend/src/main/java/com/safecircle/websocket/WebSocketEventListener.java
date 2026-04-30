@@ -15,51 +15,72 @@ import java.util.Map;
 /**
  * Listens for WebSocket lifecycle events.
  *
- * <p>The key upgrade over Phase 3: when a user's browser closes or loses
- * connectivity the {@link SessionDisconnectEvent} fires immediately and we
- * mark that user OFFLINE + broadcast to all their groups in real-time —
- * without waiting for the 30-second polling scheduler.
+ * <h3>Multi-session disconnect (Bug Fix)</h3>
+ * <p>Previously, closing <em>any</em> tab immediately marked the user OFFLINE
+ * across all groups, even if they had other active sessions open (e.g. another
+ * browser tab or mobile device).</p>
+ *
+ * <p>Fixed: we consult {@link UserSessionRegistry} and only call
+ * {@code markUserOffline} when the disconnected session was the user's
+ * <em>last</em> one.</p>
  */
 @Component
 public class WebSocketEventListener {
 
     private static final Logger log = LoggerFactory.getLogger(WebSocketEventListener.class);
 
-    private final LocationService locationService;
+    private final LocationService     locationService;
+    private final UserSessionRegistry sessionRegistry;
 
     @Autowired
-    public WebSocketEventListener(LocationService locationService) {
-        this.locationService = locationService;
+    public WebSocketEventListener(LocationService locationService,
+                                  UserSessionRegistry sessionRegistry) {
+        this.locationService  = locationService;
+        this.sessionRegistry  = sessionRegistry;
     }
 
     @EventListener
     public void handleConnect(SessionConnectedEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
         Map<String, Object> attrs = accessor.getSessionAttributes();
-        String userId = attrs != null ? (String) attrs.get("userId") : null;
-        log.info("[WS] ▶ Session CONNECTED: sessionId={}, userId={}",
+        String userId = (attrs != null) ? (String) attrs.get("userId") : null;
+        log.info("[WS] ▶ CONNECTED: sessionId={} userId={}",
                 accessor.getSessionId(), userId != null ? userId : "anonymous");
     }
 
     /**
-     * Fired the moment the STOMP session closes (tab closed, network drop, etc.).
-     * Immediately marks the user OFFLINE in all their groups and broadcasts -
-     * other clients see it within milliseconds.
+     * Fired the moment a STOMP session closes (tab closed, network drop, etc.).
+     *
+     * <p>Deregisters the session from the registry. If this was the user's last
+     * session, marks them OFFLINE in all groups and broadcasts the change — other
+     * clients see it within milliseconds.</p>
+     *
+     * <p>If the user still has other active sessions (multi-tab), we do nothing
+     * and let them stay ONLINE.</p>
      */
     @EventListener
     public void handleDisconnect(SessionDisconnectEvent event) {
-        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
-        Map<String, Object> attrs = accessor.getSessionAttributes();
+        String sessionId = event.getSessionId();
 
-        if (attrs == null) return;
+        // Deregister returns the userId that owned this session (null if anonymous)
+        String userId = sessionRegistry.deregister(sessionId);
 
-        String userId = (String) attrs.get("userId");
         if (userId == null) {
-            log.debug("[WS] ■ Anonymous session {} disconnected", event.getSessionId());
+            log.debug("[WS] ■ Anonymous session {} disconnected", sessionId);
             return;
         }
 
-        log.info("[WS] ■ User {} DISCONNECTED — marking OFFLINE instantly", userId);
+        int remainingSessions = sessionRegistry.getSessionCount(userId);
+
+        if (remainingSessions > 0) {
+            // User still has other active tabs/devices — stay ONLINE
+            log.info("[WS] ■ Session {} closed for user {} but {} session(s) still active — staying ONLINE",
+                    sessionId, userId, remainingSessions);
+            return;
+        }
+
+        // Last session closed — mark OFFLINE
+        log.info("[WS] ■ User {} DISCONNECTED (last session closed) — marking OFFLINE", userId);
         locationService.markUserOffline(userId);
     }
 }
